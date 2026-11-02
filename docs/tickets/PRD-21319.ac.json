@@ -1,0 +1,88 @@
+[
+  {
+    "id": "TC-TD-001",
+    "ac": "AC1",
+    "text": "Given a valid X-Timedoctor-Token, When timedoctor_list_companies is called, Then it returns the list of companies that token has access to (id + name for each)",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_companies_returns_company_list"]
+  },
+  {
+    "id": "TC-TD-002",
+    "ac": "AC2",
+    "text": "Given a valid token and company_id, When timedoctor_list_users is called, Then it returns that company's users, paginated, and limit is capped at 200 even if a caller asks for more",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_users_returns_paginated_roster",
+              "tests/test_tools.py::test_list_users_caps_limit_at_200"]
+  },
+  {
+    "id": "TC-TD-003",
+    "ac": "AC3",
+    "text": "Given a valid token and company_id, When timedoctor_list_projects is called, Then it returns that company's projects, paginated",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_projects_returns_project_list"]
+  },
+  {
+    "id": "TC-TD-004",
+    "ac": "AC4",
+    "text": "Given a valid token, company_id, an explicit from/to date range, and a user_id, When timedoctor_list_worklogs is called, Then it returns only that user's worklog entries within the range",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_worklogs_filters_by_user_and_date_range"]
+  },
+  {
+    "id": "TC-TD-004B",
+    "ac": "AC4",
+    "text": "Given a real Time Doctor test account with known tracked time, When timedoctor_list_worklogs is called for that window, Then the returned entries match the actual tracked sessions",
+    "type": "manual",
+    "steps": [
+      "Obtain a real Time Doctor account/JWT (needs a real vendor account -- not available at design time)",
+      "Track a known session on that account (e.g. 10 minutes on a named task)",
+      "Call timedoctor_list_worklogs with that account's token and a from/to range covering the session"
+    ],
+    "expect": "The response includes an entry matching the tracked task, with a duration close to what was actually tracked",
+    "result": "untested",
+    "notes": "Needs a real vendor account; per SOP this does not block release. Dev leg to re-flag if/when a test account becomes available."
+  },
+  {
+    "id": "TC-TD-005",
+    "ac": "AC5",
+    "text": "Given a valid token, company_id, and a date range, When timedoctor_get_activity_summary is called, Then it returns aggregated time totals for that range",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_get_activity_summary_returns_aggregated_totals"]
+  },
+  {
+    "id": "TC-TD-006",
+    "ac": "AC6",
+    "text": "Given a valid token, company_id, and a date range, When timedoctor_get_activity_by_category is called, Then it returns time spent broken down by application/website category for that range",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_get_activity_by_category_returns_breakdown"]
+  },
+  {
+    "id": "TC-TD-007",
+    "ac": "AC7",
+    "text": "Given a request with no X-Timedoctor-Token header, When any tool is called, Then the call is rejected with 401 before any outbound call to Time Doctor is made, and the error body names the required header",
+    "type": "auto",
+    "tests": ["tests/test_middleware.py::test_missing_credential_header_returns_401_without_calling_upstream"]
+  },
+  {
+    "id": "TC-TD-008",
+    "ac": "AC8",
+    "text": "Given a token whose companies list has more than one entry, When a tool is called without company_id, Then it returns an invalid_argument error listing the candidate company ids/names instead of guessing one",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_ambiguous_company_without_company_id_returns_invalid_argument"]
+  },
+  {
+    "id": "TC-TD-009",
+    "ac": "AC9",
+    "text": "Given two concurrent requests carrying two different customers' tokens, When both are in flight at the same time against the same running service, Then neither response contains the other customer's credential, company id, or user/project/worklog data",
+    "type": "auto",
+    "tests": ["tests/test_middleware.py::test_concurrent_requests_do_not_leak_credentials_across_tenants"]
+  },
+  {
+    "id": "TC-TD-010",
+    "ac": "AC10",
+    "text": "Given Time Doctor returns a 429 rate-limit response, When a tool call hits that condition, Then the tool returns a structured rate_limited error; given a 5xx/timeout, Then it returns a structured upstream_error, in both cases without an unhandled exception",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_upstream_429_maps_to_rate_limited",
+              "tests/test_tools.py::test_upstream_5xx_maps_to_upstream_error"]
+  }
+]
