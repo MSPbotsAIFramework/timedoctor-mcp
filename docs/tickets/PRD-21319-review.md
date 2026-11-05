@@ -1,5 +1,7 @@
 # PRD-21319 · Code review
 
+Status: frozen @ 0f7e0ac
+
 ## Round 1 · 2026-11-04 · reviewed dev/PRD-21319 @ cfd855a (base main@e2a17bb)
 
 Verdict: changes requested
@@ -35,3 +37,32 @@ Verdict: changes requested
    Retest: added `tests/test_tools.py::test_list_worklogs_has_more_counts_raw_page_not_filtered_items` — a 2-item upstream page at `limit=2` with only one item matching `user_id`; pre-fix this asserted `has_more is True` and failed with `assert False is True` (confirmed by running it against the pre-fix `tools.py`); post-fix it passes. Wired into `docs/tickets/PRD-21319.ac.json`'s `TC-TD-004.tests` (and the three new client tests into `TC-TD-010.tests`) alongside the existing cases.
 
 Full suite after both fixes: `uv run pytest -q` → `22 passed` (the pre-existing 18 plus these 4 new cases), run against `dev/PRD-21319 @ 46995e5` synced with `main@e2a17bb` (`main` had not moved since round 1, confirmed via `git merge-base --is-ancestor origin/main HEAD`, so no re-merge was needed). Chinese-character scan (`grep -rnP '[\x{4e00}-\x{9fff}]' --exclude-dir=.git --exclude-dir=.venv .`) clean except the quoted SOP excerpt inside this review doc's own round-1 finding text, which is pre-existing review content, not code or new docs. `gitleaks` is not installed on this host, so it was not run (per the review's own "no container runtime access"-style allowance for host tooling gaps — not a code defect). Smoke test against `python -m timedoctor_mcp`: `GET /health` → `{"status":"ok"}`; `tools/list` with `X-Timedoctor-Token` → 6 tools listed; `tools/list` with no credential header → `HTTP 401`.
+
+## Round 2 · 2026-11-05 · reviewed dev/PRD-21319 @ 0f7e0ac (base main@e2a17bb)
+
+Verdict: approved
+
+### Scope
+
+`git diff e2bdf0e...0f7e0ac` on `MSPbotsAIFramework/timedoctor-mcp` (the round-1 reviewed sha to the current `[DEV]` sha): `src/timedoctor_mcp/client.py`, `src/timedoctor_mcp/tools.py`, two new/extended test files, the `ac.json` wiring, and this review doc's own round-1 "Fixes" section (written by the dev leg, not re-litigated as a finding). `main` has not moved since round 1 (`git merge-base --is-ancestor origin/main HEAD` holds), so no re-merge was needed before this review.
+
+### Round-1 must-fix verification
+
+1. `src/timedoctor_mcp/client.py` — confirmed fixed. `_sleep_before_retry` now clamps every delay (including `Retry-After`-derived ones) to `MAX_RETRY_DELAY_S=30s` via `min(delay, MAX_RETRY_DELAY_S)` (`client.py:119`), and gates every sleep on `elapsed + delay >= CALL_BUDGET_S` (100s) using a `start = time.monotonic()` recorded once per `get()` call; all three call sites (timeout, network-error, retryable-status) now `raise last_exc` immediately when the gate trips instead of sleeping and retrying. Traced the worst case by hand: with `CONNECT_TIMEOUT_S=5` / `READ_TIMEOUT_S=30`, two full-length requests (≤35s each) plus one clamped 30s sleep lands around ~100s elapsed, at which point the gate stops a third sleep/request — comfortably inside the SOP's 120s hard limit even though the budget check itself only bounds sleeps, not the HTTP calls. `tests/test_client.py`'s three new cases exercise exactly this: a single huge `Retry-After` gets clamped (not slept verbatim), repeated 40s-costing responses trip the budget gate before a third sleep, and the pre-existing `Retry-After: 0` fast path is unaffected. Re-ran `uv run pytest tests/test_client.py -q`: `3 passed`.
+2. `src/timedoctor_mcp/tools.py:265-271` — confirmed fixed. `timedoctor_list_worklogs` now keeps `raw_items` (the unfiltered upstream page from `_extract_items`) separate from `all_items` (trimmed + optionally `user_id`-filtered), and passes `raw_items` — not `all_items` — into `_has_more(...)`. The new `test_list_worklogs_has_more_counts_raw_page_not_filtered_items` reproduces the exact scenario from the original finding (a 2-item upstream page at `limit=2`, one item filtered out by `user_id`) and asserts `has_more is True`. Re-ran `uv run pytest tests/test_tools.py -q`: `18 passed` (includes this new case).
+
+Both fixes are the minimal, targeted change the finding asked for — no behavior outside the two call paths changed.
+
+### Findings
+
+None. (0 must-fix, 0 suggestions.)
+
+### Verification run
+
+`uv run pytest -q` on `dev/PRD-21319 @ 0f7e0ac` (fresh `uv sync` in an independent worktree, Python 3.12 via `uv run`): `22 passed`, matching the dev leg's reported count. Chinese-character scan (`grep -rnP '[\x{4e00}-\x{9fff}]' --exclude-dir=.git --exclude-dir=.venv .`) clean outside the quoted SOP excerpt in this doc's own round-1 finding text (pre-existing review prose, not code). No secrets/API-key/password literals found in `src/` beyond the `X-Timedoctor-Token` header name and a docstring's own use of the word "non-secret". `gitleaks` not installed on this host (same pre-existing host-tooling gap as round 1).
+
+### Not re-litigated (acknowledged, non-blocking, unchanged from round 1)
+
+- `docker build --platform linux/amd64` not run (no `docker` group membership on review host) — environment gap, not a code defect.
+- TC-TD-004B (worklog data against a live account) remains untested — needs a real Time Doctor account, not a blocker per SOP.
+- Inferred response-envelope field names remain an acknowledged design risk, mitigated by defensive `_field()`/`_extract_items()` fallbacks.
