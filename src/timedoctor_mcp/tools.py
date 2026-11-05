@@ -262,11 +262,16 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
             return envelope_for_invalid_argument(exc)
         except UpstreamError as exc:
             return envelope_for_upstream_error(exc)
-        all_items = [_trim_worklog(w) for w in _extract_items(payload, "data", "worklogs")]
+        raw_items = _extract_items(payload, "data", "worklogs")
+        all_items = [_trim_worklog(w) for w in raw_items]
         if user_id:
             all_items = [w for w in all_items if str(w.get("user_id")) == str(user_id)]
+        # has_more must reflect the raw upstream page, not the list after the
+        # client-side user_id filter above -- otherwise a full-size upstream
+        # page that gets filtered down looks like the last page (review round 1,
+        # finding 2), silently truncating a per-user worklog listing.
         return _dump(
-            {"items": all_items, "page": page, "limit": limit, "has_more": _has_more(all_items, limit, payload)}
+            {"items": all_items, "page": page, "limit": limit, "has_more": _has_more(raw_items, limit, payload)}
         )
 
     @mcp.tool(

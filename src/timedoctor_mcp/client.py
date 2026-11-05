@@ -9,6 +9,7 @@ caching of credentials or derived data).
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import httpx
@@ -21,6 +22,14 @@ MAX_RETRIES = 3
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 # Module-level so tests can monkeypatch it to 0 and keep the retry path fast.
 DEFAULT_BACKOFF_S = 0.5
+# SOP SS14 checklist: one tool call, including all retries, must stay under
+# 120s. Budget to 100s so there is headroom left for the HTTP requests
+# themselves (connect/read) on top of the sleeps accounted for here.
+CALL_BUDGET_S = 100.0
+# Upper bound on any single retry delay, even one derived from a vendor
+# `Retry-After` header -- a 429 with `Retry-After: 150` must not be allowed
+# to blow the call budget by itself (review round 1, finding 1).
+MAX_RETRY_DELAY_S = 30.0
 
 
 class TimeDoctorClient:
@@ -55,17 +64,20 @@ class TimeDoctorClient:
 
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
 
+        start = time.monotonic()
         last_exc: UpstreamError | None = None
         for attempt in range(MAX_RETRIES + 1):
             try:
                 response = await self._client.get(path, params=clean_params)
             except httpx.TimeoutException as exc:
                 last_exc = UpstreamError(f"Time Doctor request timed out: {exc}")
-                await self._sleep_before_retry(attempt, None)
+                if not await self._sleep_before_retry(attempt, None, start):
+                    raise last_exc
                 continue
             except httpx.HTTPError as exc:
                 last_exc = UpstreamError(f"Time Doctor network error: {exc}")
-                await self._sleep_before_retry(attempt, None)
+                if not await self._sleep_before_retry(attempt, None, start):
+                    raise last_exc
                 continue
 
             if response.status_code < 400:
@@ -76,7 +88,8 @@ class TimeDoctorClient:
                     f"Time Doctor returned {response.status_code} for {path}",
                     status_code=response.status_code,
                 )
-                await self._sleep_before_retry(attempt, response.headers.get("Retry-After"))
+                if not await self._sleep_before_retry(attempt, response.headers.get("Retry-After"), start):
+                    raise last_exc
                 continue
 
             raise UpstreamError(
@@ -88,7 +101,14 @@ class TimeDoctorClient:
         raise last_exc
 
     @staticmethod
-    async def _sleep_before_retry(attempt: int, retry_after: str | None) -> None:
+    async def _sleep_before_retry(attempt: int, retry_after: str | None, start: float) -> bool:
+        """Sleep for the backoff/``Retry-After`` delay, clamped to the call budget.
+
+        Returns ``False`` (without sleeping) when even a clamped delay would push
+        this call's total elapsed time past ``CALL_BUDGET_S`` -- the caller must
+        then stop retrying and raise immediately instead of overrunning the 120s
+        hard limit the Gateway/caller expects (SOP SS14).
+        """
         if retry_after is not None:
             try:
                 delay = float(retry_after)
@@ -96,4 +116,11 @@ class TimeDoctorClient:
                 delay = DEFAULT_BACKOFF_S * (2**attempt)
         else:
             delay = DEFAULT_BACKOFF_S * (2**attempt)
+        delay = min(delay, MAX_RETRY_DELAY_S)
+
+        elapsed = time.monotonic() - start
+        if elapsed + delay >= CALL_BUDGET_S:
+            return False
+
         await asyncio.sleep(delay)
+        return True

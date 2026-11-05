@@ -204,6 +204,56 @@ async def test_list_worklogs_filters_by_user_and_date_range(app_client: httpx.As
     assert [item["user_id"] for item in payload["items"]] == ["u1"]
 
 
+@pytest.mark.asyncio
+async def test_list_worklogs_has_more_counts_raw_page_not_filtered_items(
+    app_client: httpx.AsyncClient,
+) -> None:
+    """Review round 1, finding 2.
+
+    A full-size upstream page (== limit) that the client-side user_id filter
+    then shrinks must still report has_more: true -- the next upstream page
+    can hold more of that user's worklogs. Computing has_more from the
+    post-filter list silently truncates pagination (undermines AC4).
+    """
+    with respx.mock(assert_all_called=True) as mock:
+        mock.get(f"{TIMEDOCTOR_BASE}/companies").respond(json={"data": [{"id": "c1", "name": "Acme"}]})
+        # No "total"/"total_count" in the payload, so _has_more falls back to
+        # len(items) == limit -- the raw page is exactly `limit` items, but
+        # only one of them belongs to the requested user.
+        mock.get(f"{TIMEDOCTOR_BASE}/activity/worklog").respond(
+            json={
+                "data": [
+                    {
+                        "user_id": "u1",
+                        "task_id": "t1",
+                        "project_id": "p1",
+                        "start": "2026-01-01T09:00:00Z",
+                        "end": "2026-01-01T09:30:00Z",
+                        "duration_s": 1800,
+                    },
+                    {
+                        "user_id": "u2",
+                        "task_id": "t2",
+                        "project_id": "p1",
+                        "start": "2026-01-01T10:00:00Z",
+                        "end": "2026-01-01T10:30:00Z",
+                        "duration_s": 1800,
+                    },
+                ]
+            }
+        )
+        rpc = await call_tool(
+            app_client,
+            TOKEN,
+            "timedoctor_list_worklogs",
+            {"from_date": "2026-01-01", "to_date": "2026-01-02", "user_id": "u1", "limit": 2},
+        )
+
+    payload = json.loads(tool_result_text(rpc))
+    assert [item["user_id"] for item in payload["items"]] == ["u1"]
+    assert payload["has_more"] is True
+
+
 # ---------------------------------------------------------------------------
 # TC-TD-005
 # ---------------------------------------------------------------------------
